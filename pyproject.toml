@@ -1,0 +1,23 @@
+[build-system]
+requires = ["setuptools>=68", "wheel"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "atomic"
+version = "0.1.0"
+description = "Atomic productivity timer CLI"
+readme = "README.md"
+requires-python = ">=3.10"
+authors = [{ name = "Atomic Contributors" }]
+license = { text = "MIT" }
+dependencies = []
+
+[project.scripts]
+atomic = "atomic_app.cli:main"
+
+[tool.setuptools]
+packages = ["atomic_app"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+pythonpath = ["."]
