@@ -5,17 +5,17 @@ import random
 from dataclasses import dataclass, field
 
 DIGIT_ART: dict[str, tuple[str, ...]] = {
-    "0": (" ### ", "#   #", "#   #", "#   #", " ### "),
-    "1": ("  #  ", " ##  ", "  #  ", "  #  ", " ### "),
-    "2": ("#### ", "    #", " ### ", "#    ", "#####"),
-    "3": ("#### ", "    #", " ### ", "    #", "#### "),
-    "4": ("#  # ", "#  # ", "#####", "   # ", "   # "),
-    "5": ("#####", "#    ", "#### ", "    #", "#### "),
-    "6": (" ### ", "#    ", "#### ", "#   #", " ### "),
-    "7": ("#####", "    #", "   # ", "  #  ", " #   "),
-    "8": (" ### ", "#   #", " ### ", "#   #", " ### "),
-    "9": (" ### ", "#   #", " ####", "    #", " ### "),
-    ":": ("     ", "  .  ", "     ", "  .  ", "     "),
+    "0": ("┏━┓", "┃ ┃", "┗━┛"),
+    "1": (" ╻ ", " ┃ ", "╺┻╸"),
+    "2": ("┏━┓", " ━┫", "┗━╸"),
+    "3": ("┏━┓", " ━┫", "┗━┛"),
+    "4": ("╻ ╻", "┗━┫", "  ╹"),
+    "5": ("┏━╸", "┗━┓", "┗━┛"),
+    "6": ("┏━╸", "┣━┓", "┗━┛"),
+    "7": ("┏━┓", "  ┃", "  ╹"),
+    "8": ("┏━┓", "┣━┫", "┗━┛"),
+    "9": ("┏━┓", "┗━┫", "╺━┛"),
+    ":": ("   ", " • ", " • "),
 }
 
 
@@ -32,10 +32,10 @@ def render_ascii_countdown(seconds: int) -> list[str]:
 
 
 def render_ascii_text(text: str) -> list[str]:
-    rows = [""] * 5
+    rows = [""] * 3
     for index, ch in enumerate(text):
         glyph = DIGIT_ART.get(ch, DIGIT_ART["0"])
-        for row in range(5):
+        for row in range(3):
             rows[row] += glyph[row]
             if index < len(text) - 1:
                 rows[row] += " "
@@ -61,6 +61,33 @@ class DrawCell:
     y: int
     char: str
     style: str = "normal"
+
+
+@dataclass(frozen=True)
+class Viewport:
+    x: int
+    y: int
+    width: int
+    height: int
+
+
+def split_layout(height: int, width: int, pad_y: int = 1, pad_x: int = 2) -> tuple[Viewport, Viewport]:
+    inner_width = max(width - (pad_x * 2), 0)
+    inner_height = max(height - (pad_y * 2), 0)
+    if inner_width <= 0 or inner_height <= 0:
+        empty = Viewport(0, 0, 0, 0)
+        return empty, empty
+
+    top_height = max(int(inner_height * 0.65), 3)
+    min_bottom = 7
+    if inner_height >= min_bottom + 3:
+        top_height = min(top_height, inner_height - min_bottom)
+    top_height = min(top_height, inner_height)
+    bottom_height = max(inner_height - top_height, 0)
+
+    top = Viewport(x=pad_x, y=pad_y, width=inner_width, height=top_height)
+    bottom = Viewport(x=pad_x, y=pad_y + top_height, width=inner_width, height=bottom_height)
+    return top, bottom
 
 
 @dataclass

@@ -34,8 +34,9 @@ Session accounting rules:
 - Completed productive time is stored as whole minutes using truncation (`floor`).
 - Sessions auto-save when countdown reaches zero.
 - Sessions can also be saved early with `d` while paused.
-- Countdown is rendered as large ASCII-art timer text on the main screen, with an inline fallback/status line.
-- Background animations are non-blocking and cosmetic only; they do not affect timing/accounting behavior.
+- The timer screen uses a two-pane layout: a larger top animation pane and a lower info/control pane.
+- Countdown is rendered in a 3-line Future-style ASCII font in the lower pane.
+- Background animations are non-blocking, text-only, and cosmetic; they do not affect timing/accounting behavior.
 
 ## Data storage
 

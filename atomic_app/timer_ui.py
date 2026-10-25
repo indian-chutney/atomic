@@ -7,7 +7,7 @@ from pathlib import Path
 
 from atomic_app.session import TimerSession
 from atomic_app.storage import add_session, load_data
-from atomic_app.timer_visuals import BackgroundAnimator, clip_text, format_countdown, render_ascii_countdown
+from atomic_app.timer_visuals import BackgroundAnimator, clip_text, format_countdown, render_ascii_countdown, split_layout
 
 CTRL_T = 20
 CTRL_O = 15
@@ -140,8 +140,6 @@ def _safe_addstr(stdscr: curses.window, y: int, x: int, text: str, attr: int = 0
 def _style_attr(style: str) -> int:
     if style == "bright":
         return curses.A_BOLD
-    if style == "dim":
-        return curses.A_DIM
     return curses.A_NORMAL
 
 
@@ -154,27 +152,33 @@ def _render_main(
 ) -> None:
     stdscr.erase()
     h, w = stdscr.getmaxyx()
-    animator.step(time.monotonic(), w, h)
-    for cell in animator.cells(w, h):
-        _safe_addstr(stdscr, cell.y, cell.x, cell.char, _style_attr(cell.style))
+    top, bottom = split_layout(h, w)
 
-    _safe_addstr(stdscr, 1, 2, "Atomic Timer", curses.A_BOLD)
+    animator.step(time.monotonic(), top.width, top.height)
+    for cell in animator.cells(top.width, top.height):
+        _safe_addstr(stdscr, top.y + cell.y, top.x + cell.x, cell.char, _style_attr(cell.style))
+
+    divider_y = max(bottom.y - 1, 0)
+    _safe_addstr(stdscr, divider_y, bottom.x, "─" * bottom.width)
+
+    _safe_addstr(stdscr, bottom.y, bottom.x, "Atomic Timer", curses.A_BOLD)
 
     ascii_lines = render_ascii_countdown(session.remaining_seconds)
     ascii_width = max((len(line) for line in ascii_lines), default=0)
-    art_x = max((w - ascii_width) // 2, 2)
+    art_x = max(bottom.x + (bottom.width - ascii_width) // 2, bottom.x)
     for row, line in enumerate(ascii_lines):
-        _safe_addstr(stdscr, 3 + row, art_x, line, curses.A_BOLD)
+        _safe_addstr(stdscr, bottom.y + 1 + row, art_x, line, curses.A_BOLD)
 
-    _safe_addstr(stdscr, 9, 2, f"Remaining: {format_countdown(session.remaining_seconds)}", curses.A_BOLD)
-    _safe_addstr(stdscr, 10, 2, f"Elapsed productive time: {format_countdown(int(session.elapsed_seconds))}")
-    _safe_addstr(stdscr, 11, 2, f"Subject: {selected_subject or 'Unassigned'}")
+    info_y = bottom.y + 5
+    _safe_addstr(stdscr, info_y, bottom.x, f"Remaining: {format_countdown(session.remaining_seconds)}", curses.A_BOLD)
+    _safe_addstr(stdscr, info_y + 1, bottom.x, f"Elapsed productive time: {format_countdown(int(session.elapsed_seconds))}")
+    _safe_addstr(stdscr, info_y + 2, bottom.x, f"Subject: {selected_subject or 'Unassigned'}")
 
     mode = "Running" if session.running else "Paused"
     if session.finished:
         mode = "Completed"
-    _safe_addstr(stdscr, 12, 2, f"Status: {mode}")
-    _safe_addstr(stdscr, 12, max(w - 24, 2), f"Background: {animator.mode}")
+    _safe_addstr(stdscr, info_y + 3, bottom.x, f"Status: {mode}")
+    _safe_addstr(stdscr, info_y + 3, max(bottom.x, bottom.x + bottom.width - 24), f"Background: {animator.mode}")
 
     help_lines = [
         "Ctrl+T set duration",
@@ -184,10 +188,10 @@ def _render_main(
         "b background mode",
         "q quit",
     ]
-    _safe_addstr(stdscr, 14, 2, " | ".join(help_lines))
+    _safe_addstr(stdscr, info_y + 4, bottom.x, " | ".join(help_lines))
 
     if status:
-        _safe_addstr(stdscr, 16, 2, status)
+        _safe_addstr(stdscr, info_y + 5, bottom.x, status)
 
     stdscr.refresh()
 
