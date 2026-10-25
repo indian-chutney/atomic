@@ -2,10 +2,12 @@ from __future__ import annotations
 
 import curses
 import datetime as dt
+import time
 from pathlib import Path
 
 from atomic_app.session import TimerSession
 from atomic_app.storage import add_session, load_data
+from atomic_app.timer_visuals import BackgroundAnimator, clip_text, format_countdown, render_ascii_countdown
 
 CTRL_T = 20
 CTRL_O = 15
@@ -122,35 +124,70 @@ def _confirm_exit(stdscr: curses.window) -> bool:
             return index == 0
 
 
-def _format_countdown(seconds: int) -> str:
-    mins, secs = divmod(max(seconds, 0), 60)
-    hours, mins = divmod(mins, 60)
-    if hours:
-        return f"{hours:02d}:{mins:02d}:{secs:02d}"
-    return f"{mins:02d}:{secs:02d}"
+def _safe_addstr(stdscr: curses.window, y: int, x: int, text: str, attr: int = 0) -> None:
+    h, w = stdscr.getmaxyx()
+    if y < 0 or y >= h:
+        return
+    clipped_x, clipped_text = clip_text(text, x, w)
+    if not clipped_text:
+        return
+    try:
+        stdscr.addstr(y, clipped_x, clipped_text, attr)
+    except curses.error:
+        return
 
 
-def _render_main(stdscr: curses.window, session: TimerSession, selected_subject: str | None, status: str) -> None:
+def _style_attr(style: str) -> int:
+    if style == "bright":
+        return curses.A_BOLD
+    if style == "dim":
+        return curses.A_DIM
+    return curses.A_NORMAL
+
+
+def _render_main(
+    stdscr: curses.window,
+    session: TimerSession,
+    selected_subject: str | None,
+    status: str,
+    animator: BackgroundAnimator,
+) -> None:
     stdscr.erase()
     h, w = stdscr.getmaxyx()
+    animator.step(time.monotonic(), w, h)
+    for cell in animator.cells(w, h):
+        _safe_addstr(stdscr, cell.y, cell.x, cell.char, _style_attr(cell.style))
 
-    stdscr.addstr(1, 2, "Atomic Timer", curses.A_BOLD)
-    stdscr.addstr(3, 2, f"Remaining: {_format_countdown(session.remaining_seconds)}", curses.A_BOLD)
-    stdscr.addstr(4, 2, f"Elapsed productive time: {_format_countdown(int(session.elapsed_seconds))}")
-    stdscr.addstr(5, 2, f"Subject: {selected_subject or 'Unassigned'}")
+    _safe_addstr(stdscr, 1, 2, "Atomic Timer", curses.A_BOLD)
+
+    ascii_lines = render_ascii_countdown(session.remaining_seconds)
+    ascii_width = max((len(line) for line in ascii_lines), default=0)
+    art_x = max((w - ascii_width) // 2, 2)
+    for row, line in enumerate(ascii_lines):
+        _safe_addstr(stdscr, 3 + row, art_x, line, curses.A_BOLD)
+
+    _safe_addstr(stdscr, 9, 2, f"Remaining: {format_countdown(session.remaining_seconds)}", curses.A_BOLD)
+    _safe_addstr(stdscr, 10, 2, f"Elapsed productive time: {format_countdown(int(session.elapsed_seconds))}")
+    _safe_addstr(stdscr, 11, 2, f"Subject: {selected_subject or 'Unassigned'}")
 
     mode = "Running" if session.running else "Paused"
     if session.finished:
         mode = "Completed"
-    stdscr.addstr(7, 2, f"Status: {mode}")
+    _safe_addstr(stdscr, 12, 2, f"Status: {mode}")
+    _safe_addstr(stdscr, 12, max(w - 24, 2), f"Background: {animator.mode}")
 
     help_lines = [
-        "Ctrl+T set duration", "Ctrl+O select subject", "Space pause/resume", "d save paused session", "q quit",
+        "Ctrl+T set duration",
+        "Ctrl+O select subject",
+        "Space pause/resume",
+        "d save paused session",
+        "b background mode",
+        "q quit",
     ]
-    stdscr.addstr(9, 2, " | ".join(help_lines)[: w - 4])
+    _safe_addstr(stdscr, 14, 2, " | ".join(help_lines))
 
     if status:
-        stdscr.addstr(11, 2, status[: w - 4])
+        _safe_addstr(stdscr, 16, 2, status)
 
     stdscr.refresh()
 
@@ -163,6 +200,7 @@ def _run(stdscr: curses.window, base_path: Path) -> int:
     session = TimerSession(total_minutes=0)
     selected_subject: str | None = None
     status = "Press Ctrl+T to set a duration."
+    animator = BackgroundAnimator(mode="off")
 
     while True:
         session.tick()
@@ -173,7 +211,7 @@ def _run(stdscr: curses.window, base_path: Path) -> int:
             status = f"Saved {session.productive_minutes} minute(s) for {session.subject or 'Unassigned'}."
             session = TimerSession(total_minutes=0, subject=selected_subject)
 
-        _render_main(stdscr, session, selected_subject, status)
+        _render_main(stdscr, session, selected_subject, status, animator)
 
         try:
             key = stdscr.getch()
@@ -225,6 +263,9 @@ def _run(stdscr: curses.window, base_path: Path) -> int:
                 status = "Exit canceled."
             else:
                 return 0
+        elif key in (ord("b"), ord("B")):
+            mode = animator.cycle_mode()
+            status = f"Background mode: {mode}."
         elif key == curses.KEY_RESIZE:
             continue
 

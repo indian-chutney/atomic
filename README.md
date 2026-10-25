@@ -25,6 +25,7 @@ atomic refresh
 - `Ctrl+O`: choose subject (or unassigned)
 - `Space`: pause/resume
 - `d`: while paused, finish/save current session
+- `b`: cycle background animation mode (`off` → `rain` → `astro`)
 - `q`: request exit; unfinished sessions require confirmation and are discarded if confirmed
 
 Session accounting rules:
@@ -33,6 +34,8 @@ Session accounting rules:
 - Completed productive time is stored as whole minutes using truncation (`floor`).
 - Sessions auto-save when countdown reaches zero.
 - Sessions can also be saved early with `d` while paused.
+- Countdown is rendered as large ASCII-art timer text on the main screen, with an inline fallback/status line.
+- Background animations are non-blocking and cosmetic only; they do not affect timing/accounting behavior.
 
 ## Data storage
 
