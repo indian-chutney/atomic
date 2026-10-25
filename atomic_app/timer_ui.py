@@ -2,13 +2,32 @@ from __future__ import annotations
 
 import curses
 import datetime as dt
+import time
 from pathlib import Path
 
 from atomic_app.session import TimerSession
 from atomic_app.storage import add_session, load_data
+from atomic_app.timer_visuals import BackgroundAnimator, clip_text, format_countdown, render_ascii_countdown, split_layout
 
 CTRL_T = 20
 CTRL_O = 15
+
+
+def _build_palette() -> dict[str, int]:
+    palette = {"base": curses.A_NORMAL, "bright": curses.A_BOLD, "dim": curses.A_NORMAL}
+    if not curses.has_colors():
+        return palette
+    try:
+        curses.start_color()
+        curses.use_default_colors()
+        curses.init_pair(1, curses.COLOR_WHITE, -1)
+        base = curses.color_pair(1)
+        palette["base"] = base
+        palette["bright"] = base | curses.A_BOLD
+        palette["dim"] = base
+    except curses.error:
+        return palette
+    return palette
 
 
 def _draw_box(stdscr: curses.window, title: str, lines: list[str]) -> None:
@@ -122,35 +141,90 @@ def _confirm_exit(stdscr: curses.window) -> bool:
             return index == 0
 
 
-def _format_countdown(seconds: int) -> str:
-    mins, secs = divmod(max(seconds, 0), 60)
-    hours, mins = divmod(mins, 60)
-    if hours:
-        return f"{hours:02d}:{mins:02d}:{secs:02d}"
-    return f"{mins:02d}:{secs:02d}"
+def _safe_addstr(stdscr: curses.window, y: int, x: int, text: str, attr: int = 0) -> None:
+    h, w = stdscr.getmaxyx()
+    if y < 0 or y >= h:
+        return
+    clipped_x, clipped_text = clip_text(text, x, w)
+    if not clipped_text:
+        return
+    try:
+        stdscr.addstr(y, clipped_x, clipped_text, attr)
+    except curses.error:
+        return
 
 
-def _render_main(stdscr: curses.window, session: TimerSession, selected_subject: str | None, status: str) -> None:
+def _safe_addstr_sparse(stdscr: curses.window, y: int, x: int, text: str, attr: int = 0) -> None:
+    for index, ch in enumerate(text):
+        if ch == " ":
+            continue
+        _safe_addstr(stdscr, y, x + index, ch, attr)
+
+
+def _style_attr(style: str, palette: dict[str, int]) -> int:
+    if style == "bright":
+        return palette["bright"]
+    if style == "dim":
+        return palette["dim"]
+    return palette["base"]
+
+
+def _render_main(
+    stdscr: curses.window,
+    session: TimerSession,
+    selected_subject: str | None,
+    status: str,
+    animator: BackgroundAnimator,
+    palette: dict[str, int],
+) -> None:
     stdscr.erase()
     h, w = stdscr.getmaxyx()
+    top, bottom = split_layout(h, w)
 
-    stdscr.addstr(1, 2, "Atomic Timer", curses.A_BOLD)
-    stdscr.addstr(3, 2, f"Remaining: {_format_countdown(session.remaining_seconds)}", curses.A_BOLD)
-    stdscr.addstr(4, 2, f"Elapsed productive time: {_format_countdown(int(session.elapsed_seconds))}")
-    stdscr.addstr(5, 2, f"Subject: {selected_subject or 'Unassigned'}")
+    animator.step(time.monotonic(), top.width, top.height)
+    for cell in animator.cells(top.width, top.height):
+        _safe_addstr(stdscr, top.y + cell.y, top.x + cell.x, cell.char, _style_attr(cell.style, palette))
+
+    divider_y = max(bottom.y - 1, 0)
+    _safe_addstr(stdscr, divider_y, bottom.x, "─" * bottom.width, palette["dim"])
+
+    _safe_addstr(stdscr, bottom.y, bottom.x, "Atomic Timer", palette["bright"])
+
+    ascii_lines = render_ascii_countdown(session.remaining_seconds)
+    ascii_width = max((len(line) for line in ascii_lines), default=0)
+    art_x = max(bottom.x + (bottom.width - ascii_width) // 2, bottom.x)
+    for row, line in enumerate(ascii_lines):
+        _safe_addstr_sparse(stdscr, bottom.y + 1 + row, art_x, line, palette["bright"])
+
+    info_y = bottom.y + 5
+    _safe_addstr(stdscr, info_y, bottom.x, f"Remaining: {format_countdown(session.remaining_seconds)}", palette["bright"])
+    _safe_addstr(stdscr, info_y + 1, bottom.x, f"Elapsed productive time: {format_countdown(int(session.elapsed_seconds))}", palette["base"])
+    _safe_addstr(stdscr, info_y + 2, bottom.x, f"Subject: {selected_subject or 'Unassigned'}", palette["base"])
 
     mode = "Running" if session.running else "Paused"
     if session.finished:
         mode = "Completed"
-    stdscr.addstr(7, 2, f"Status: {mode}")
+    _safe_addstr(stdscr, info_y + 3, bottom.x, f"Status: {mode}", palette["base"])
+    _safe_addstr(
+        stdscr,
+        info_y + 3,
+        max(bottom.x, bottom.x + bottom.width - 24),
+        f"Background: {animator.mode}",
+        palette["base"],
+    )
 
     help_lines = [
-        "Ctrl+T set duration", "Ctrl+O select subject", "Space pause/resume", "d save paused session", "q quit",
+        "Ctrl+T set duration",
+        "Ctrl+O select subject",
+        "Space pause/resume",
+        "d save paused session",
+        "b background mode",
+        "q quit",
     ]
-    stdscr.addstr(9, 2, " | ".join(help_lines)[: w - 4])
+    _safe_addstr(stdscr, info_y + 4, bottom.x, " | ".join(help_lines), palette["dim"])
 
     if status:
-        stdscr.addstr(11, 2, status[: w - 4])
+        _safe_addstr(stdscr, info_y + 5, bottom.x, status, palette["base"])
 
     stdscr.refresh()
 
@@ -163,6 +237,8 @@ def _run(stdscr: curses.window, base_path: Path) -> int:
     session = TimerSession(total_minutes=0)
     selected_subject: str | None = None
     status = "Press Ctrl+T to set a duration."
+    animator = BackgroundAnimator(mode="off")
+    palette = _build_palette()
 
     while True:
         session.tick()
@@ -173,7 +249,7 @@ def _run(stdscr: curses.window, base_path: Path) -> int:
             status = f"Saved {session.productive_minutes} minute(s) for {session.subject or 'Unassigned'}."
             session = TimerSession(total_minutes=0, subject=selected_subject)
 
-        _render_main(stdscr, session, selected_subject, status)
+        _render_main(stdscr, session, selected_subject, status, animator, palette)
 
         try:
             key = stdscr.getch()
@@ -225,6 +301,9 @@ def _run(stdscr: curses.window, base_path: Path) -> int:
                 status = "Exit canceled."
             else:
                 return 0
+        elif key in (ord("b"), ord("B")):
+            mode = animator.cycle_mode()
+            status = f"Background mode: {mode}."
         elif key == curses.KEY_RESIZE:
             continue
 
